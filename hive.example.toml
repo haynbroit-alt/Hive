@@ -8,17 +8,30 @@ host = "127.0.0.1"   # ne changez pas sans réseau privé (Tailscale). Jamais d'
 port = 8765
 
 [colony]
-parallelism = 3       # tâches simultanées (une par abeille et par tour)
-quorum = 0.5          # part du vote pondéré nécessaire (strictement au-dessus) pour un quorum
+parallelism = 3              # travaux LLM simultanés (une abeille ne pense qu'à une chose à la fois)
+mechanical_parallelism = 4   # travaux outils simultanés (rendu, voix, montage)
+quorum = 0.5                 # part du vote pondéré nécessaire (strictement au-dessus) pour un quorum
 tick_s = 1.0
 
 [policy]
-budget_cap_eur = 0.0          # 0 € : aucun fournisseur payant ne sera jamais appelé
+budget_cap_eur = 0.0          # plafond GLOBAL : 0 € => aucun fournisseur payant ne sera jamais appelé
+mission_budget_eur = 0.0      # enveloppe par défaut d'une mission (`hive topup N 5` pour la recharger)
 auto_execute_max = "faible"   # au-delà : votre validation (faible | modéré | élevé)
-max_steps_per_mission = 60
-max_llm_calls_per_mission = 80
+max_revisions = 3             # révisions par mission (refus humains + corrections automatiques)
+max_steps_per_mission = 120
+max_llm_calls_per_mission = 120
+max_events_per_mission = 4000 # disjoncteur anti-boucle
 max_mission_seconds = 3600
 require_human_for_lessons = true
+
+[studio]
+width = 1280
+height = 720
+fps = 25
+burn_text = true              # mot-clé et phrase incrustés (ffmpeg drawtext + police système)
+# [studio.tts]                # voix : espeak-ng par défaut (robotique, gratuite, locale)
+# speed = 160
+# command = ["piper", "--model", "fr_FR-siwis-medium.onnx", "--output_file", "{out}"]  # texte sur stdin
 
 # --- Modèles -----------------------------------------------------------------
 # « offline » est toujours présent (secours déterministe, honnête, 0 €).
@@ -50,19 +63,20 @@ vision = true
 
 [models]
 default = ["local", "offline"]
+# scenariste = ["local2", "local", "offline"]  # une autre « plume » pour les scénarios
 # sceptique = ["local2", "local", "offline"]   # une critique faite par un autre modèle décorrèle les erreurs
-# vision = ["local"]                           # utilisé pour décrire images et images clés
+# vision = ["local"]                           # décrire images et images clés
 
 [tools]
 web_domains = ["wikipedia.org"]   # lecture web autorisée uniquement sur ces domaines (HTTPS)
 webhook_urls = []                 # effets externes : URL exactes autorisées (toujours sous validation)
 
-[stt]                             # transcription vocale
+[stt]                             # transcription vocale (messages vocaux reçus)
 # type = "faster-whisper"         # local : pip install ".[stt]"
 # model = "small"
 # language = "fr"
 
 [telegram]
-enabled = false
+enabled = false                   # `hive bot` l'active d'office
 token_env = "HIVE_TELEGRAM_TOKEN" # jeton du bot (via @BotFather) dans cette variable d'environnement
 allowed_chat_ids = []             # vide = mode installation : le bot vous donnera votre identifiant
