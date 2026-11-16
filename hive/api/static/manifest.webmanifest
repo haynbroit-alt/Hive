@@ -1,0 +1,14 @@
+{
+  "name": "HIVE — Conseil de la ruche",
+  "short_name": "HIVE",
+  "description": "Observer, commander et valider une intelligence collective d'agents IA.",
+  "lang": "fr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#14120d",
+  "theme_color": "#f5a623",
+  "icons": [
+    { "src": "/static/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
