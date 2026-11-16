@@ -21,8 +21,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
-
+from . import http
 from .governance import Budget, BudgetBlocked
 from .ledger import Ledger
 
@@ -129,10 +128,9 @@ class OllamaProvider(Provider):
             return self._avail[1]
         ok = False
         try:
-            async with httpx.AsyncClient(timeout=1.5) as c:
-                r = await c.get(f"{self.base_url}/api/tags")
-                ok = r.status_code == 200
-        except httpx.HTTPError:
+            r = await http.request("GET", f"{self.base_url}/api/tags", timeout=1.5)
+            ok = r.status == 200
+        except http.HTTPError:
             ok = False
         self._avail = (now, ok)
         return ok
@@ -149,11 +147,10 @@ class OllamaProvider(Provider):
         if req.json_mode:
             body["format"] = "json"
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_s) as c:
-                r = await c.post(f"{self.base_url}/api/chat", json=body)
-                r.raise_for_status()
-                data = r.json()
-        except (httpx.HTTPError, ValueError) as e:
+            r = await http.request("POST", f"{self.base_url}/api/chat", json=body, timeout=self.timeout_s)
+            r.raise_for_status()
+            data = r.json()
+        except (http.HTTPError, ValueError) as e:
             raise ProviderError(f"ollama: {e}") from e
         text = (data.get("message") or {}).get("content", "")
         ti, to = int(data.get("prompt_eval_count") or 0), int(data.get("eval_count") or 0)
@@ -193,11 +190,11 @@ class OpenAICompatProvider(Provider):
             body["response_format"] = {"type": "json_object"}
         headers = {"Authorization": f"Bearer {self._key()}"} if self._key() else {}
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_s) as c:
-                r = await c.post(f"{self.base_url}/chat/completions", json=body, headers=headers)
-                r.raise_for_status()
-                data = r.json()
-        except (httpx.HTTPError, ValueError) as e:
+            r = await http.request("POST", f"{self.base_url}/chat/completions", json=body, headers=headers,
+                                   timeout=self.timeout_s)
+            r.raise_for_status()
+            data = r.json()
+        except (http.HTTPError, ValueError) as e:
             raise ProviderError(f"{self.name}: {e}") from e
         try:
             text = data["choices"][0]["message"]["content"] or ""
@@ -309,7 +306,7 @@ class Router:
                 continue
             est = p.estimate_cost(req)
             try:
-                self.budget.check(est, f"appel {name}/{p.model}")
+                self.budget.check(est, f"appel {name}/{p.model}", mission_id)
             except BudgetBlocked as e:
                 self.ledger.append("budget.blocked", actor,
                                    {"provider": name, "estimate": est, "reason": str(e)}, mission_id)
@@ -330,6 +327,20 @@ class Router:
             }, mission_id)
             return resp
         raise NoProviderAvailable("; ".join(skipped) or "aucun fournisseur configuré")
+
+    async def usable(self, prefs: list[str], mission_id: str | None = None) -> str | None:
+        """Premier VRAI modèle (hors cerveau hors-ligne) joignable et compatible avec le budget."""
+        probe = LLMRequest("", "x" * 2000, max_tokens=1500)
+        for name in prefs:
+            p = self.providers.get(name)
+            if p is None or p.kind == "offline" or not await p.available():
+                continue
+            try:
+                self.budget.check(p.estimate_cost(probe), f"sonde {name}", mission_id)
+            except BudgetBlocked:
+                continue
+            return name
+        return None
 
     def describe(self) -> list[dict[str, Any]]:
         return [p.describe() for p in self.providers.values()]

@@ -159,10 +159,13 @@ def offline_answer(req: Any) -> str:
             cells.append({"kind": "belief", "status": "unknown", "confidence": 0.2, "refs": [unknown["id"]],
                           "data": {"revises": unknown["id"], "subject": (unknown.get("data") or {}).get("subject")},
                           "content": f"{TAG} Révision : aucune preuve nouvelle, la croyance reste inconnue."})
-    elif phase == "help":
+    elif phase in ("help", "entraide"):
         cells.append({"kind": "observation", "status": "unknown", "confidence": 0.2, "refs": [],
                       "content": f"{TAG} Demande d'aide reçue (« {_first_sentence(task, 100)} ») : "
                                  f"impossible d'y répondre sans modèle."})
+    elif phase == "verification":
+        cells.append({"kind": "confirmation", "status": "unknown", "confidence": 0.1, "refs": [],
+                      "content": f"{TAG} Découverte non vérifiable sans modèle de langage : à traiter comme une hypothèse."})
     else:
         cells.append({"kind": "observation", "status": "unknown", "confidence": 0.1, "refs": [],
                       "content": f"{TAG} Phase « {phase} » non prise en charge hors-ligne."})

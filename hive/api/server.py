@@ -25,13 +25,14 @@ from pydantic import BaseModel, Field
 
 from ..config import Hive
 from ..core.board import Cell
-from ..core.cycle import PHASES, PROFILE_LABELS
+from ..core.cycle import PROFILE_LABELS
 from ..core.dreaming import Dreamer
 from ..core.ledger import Event
+from ..core.views import STATUS_FR, event_summary, mission_brief
 
 STATIC = Path(__file__).parent / "static"
 COOKIE = "hive_session"
-SAFE_INLINE = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+SAFE_INLINE = {"image/png", "image/jpeg", "image/gif", "image/webp", "video/mp4", "audio/wav", "audio/mpeg", "audio/ogg"}
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
        "media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
@@ -61,6 +62,14 @@ class DirectiveIn(BaseModel):
     mission_id: str | None = None
 
 
+class NoteIn(BaseModel):
+    note: str = Field(min_length=2, max_length=2000)
+
+
+class TopupIn(BaseModel):
+    amount: float = Field(gt=0, le=1000)
+
+
 class BudgetIn(BaseModel):
     cap: float = Field(ge=0, le=10_000)
     reason: str = Field(min_length=3, max_length=500)
@@ -70,41 +79,6 @@ def cell_json(c: Cell) -> dict[str, Any]:
     d = c.to_dict()
     d["data"] = {k: v for k, v in c.data.items() if k not in ("bids",)} if c.kind != "task" else c.data
     return d
-
-
-def event_summary(ev: Event) -> dict[str, Any]:
-    p = ev.payload
-    out: dict[str, Any] = {"seq": ev.seq, "ts": ev.ts, "type": ev.type, "actor": ev.actor,
-                           "mission_id": ev.mission_id}
-    if ev.type == "cell.posted":
-        out.update(kind=p.get("kind"), id=p.get("id"), status=p.get("status"), phase=p.get("phase"),
-                   taint=p.get("taint"), text=str(p.get("content", ""))[:220])
-    elif ev.type == "cell.updated":
-        ch = p.get("changes", {})
-        out.update(id=p.get("id"), status=ch.get("status"), claimed_by=ch.get("claimed_by"),
-                   text=p.get("reason", ""))
-    elif ev.type == "llm.called":
-        out.update(text=f"{p.get('provider')}/{p.get('model')} · {p.get('tokens_in')}→{p.get('tokens_out')} jetons"
-                        f" · {p.get('cost', 0):.4f} €")
-    elif ev.type in ("protocol.violation", "budget.blocked", "llm.error", "task.error", "colony.error"):
-        out.update(text=str(p.get("what") or p.get("reason") or p.get("error") or p.get("trace") or "")[-220:])
-    elif ev.type == "agent.joined":
-        out.update(text=f"{p.get('title')} rejoint la ruche (modèles : {' › '.join(p.get('models', []))})")
-    elif ev.type == "task.finished":
-        out.update(text=f"{p.get('agent')} a {'terminé' if p.get('ok') else 'échoué'} : {p.get('phase')}")
-    elif ev.type == "reputation.updated":
-        out.update(text=f"{p.get('agent')} · {p.get('skill')} ← {p.get('score'):.2f} ({p.get('reason')})")
-    elif ev.type in ("auth.login", "auth.failed", "auth.telegram_rejected"):
-        out.update(text={"auth.login": "connexion du Conseil", "auth.failed": "tentative de connexion refusée",
-                         "auth.telegram_rejected": "message Telegram d'un inconnu ignoré"}[ev.type])
-    elif ev.type in ("colony.paused", "colony.resumed"):
-        out.update(text=("⏸ ruche en pause" if ev.type == "colony.paused" else "▶ ruche relancée")
-                   + (f" — {p['reason']}" if p.get("reason") else ""))
-    elif ev.type == "mission.step":
-        out.update(text=PHASES[p["step"]].label if p.get("step") in PHASES else str(p.get("step", "")).upper())
-    else:
-        out.update(text=json.dumps(p, ensure_ascii=False)[:220])
-    return out
 
 
 def create_app(hive: Hive, token: str, *, run_colony: bool = True, secure_cookie: bool = False) -> FastAPI:
@@ -150,6 +124,8 @@ def create_app(hive: Hive, token: str, *, run_colony: bool = True, secure_cookie
         if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.url.path.startswith("/api/") \
                 and request.headers.get("x-hive") != "1":
             return JSONResponse({"detail": "en-tête X-Hive manquant"}, status_code=403)
+        if request.url.path.startswith("/api/"):
+            hive.ledger.catch_up()  # voir aussi ce que la CLI ou un autre processus vient d'écrire
         resp: Response = await call_next(request)
         resp.headers["Content-Security-Policy"] = CSP
         resp.headers["X-Content-Type-Options"] = "nosniff"
@@ -217,9 +193,10 @@ def create_app(hive: Hive, token: str, *, run_colony: bool = True, secure_cookie
     async def missions(who: str = Depends(authed)):
         out = []
         for m in reversed(board.query(kind="mission")):
-            out.append({"id": m.id, "text": m.content[:300], "status": m.status, "profile": m.data.get("profile"),
-                        "step": colony.current_step(m), "plan": m.data.get("plan"), "score": m.data.get("score"),
-                        "created_at": m.created_at, "waiting_on": m.data.get("waiting_on"),
+            out.append({"id": m.id, "number": m.data.get("number"), "text": m.content[:300], "status": m.status,
+                        "status_fr": STATUS_FR.get(m.status, m.status), "profile": m.data.get("profile"),
+                        "rev": m.data.get("rev", 1), "step": colony.current_step(m), "score": m.data.get("score"),
+                        "outcome": m.data.get("outcome"), "created_at": m.created_at,
                         "end_reason": m.data.get("end_reason")})
         return out[:100]
 
@@ -229,7 +206,28 @@ def create_app(hive: Hive, token: str, *, run_colony: bool = True, secure_cookie
         if m is None or m.kind != "mission":
             raise HTTPException(404, "mission inconnue")
         cells = [cell_json(c) for c in board.query(mission_id=mission_id)]
-        return {"mission": {**cell_json(m), "step": colony.current_step(m)}, "cells": cells}
+        return {"mission": {**cell_json(m), "step": colony.current_step(m)}, "brief": mission_brief(colony, m),
+                "cells": cells}
+
+    @app.post("/api/missions/{mission_id}/revise")
+    async def revise(mission_id: str, body: NoteIn, who: str = Depends(authed)):
+        try:
+            ok = await colony.request_revision(mission_id, body.note, by=who)
+        except KeyError:
+            raise HTTPException(404, "mission inconnue")
+        except ValueError as e:
+            raise HTTPException(409, str(e))
+        return {"ok": ok, "rev": board.get(mission_id).data.get("rev")}
+
+    @app.post("/api/missions/{mission_id}/topup")
+    async def topup(mission_id: str, body: TopupIn, who: str = Depends(authed)):
+        if board.get(mission_id) is None:
+            raise HTTPException(404, "mission inconnue")
+        return colony.topup(mission_id, body.amount, by=who)
+
+    @app.get("/api/workers")
+    async def workers(who: str = Depends(authed)):
+        return [w.describe() for w in colony.workers.values()]
 
     @app.post("/api/missions")
     async def create_mission(text: str = Form(..., max_length=8000), profile: str = Form("auto"),
@@ -246,7 +244,7 @@ def create_app(hive: Hive, token: str, *, run_colony: bool = True, secure_cookie
                                             attachments=arts)
         except ValueError as e:
             raise HTTPException(400, str(e))
-        return {"id": m.id, "profile": m.data["profile"], "plan": m.data["plan"]}
+        return {"id": m.id, "number": m.data["number"], "profile": m.data["profile"], "plan": m.data["plan"]}
 
     @app.post("/api/missions/{mission_id}/cancel")
     async def cancel(mission_id: str, who: str = Depends(authed)):

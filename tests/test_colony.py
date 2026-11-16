@@ -41,7 +41,7 @@ def test_simple_question_uses_short_profile(hive):
     assert m.data["profile"] == "rapide" and m.status == "done"
     assert hive.board.query(kind="report", mission_id=m.id)
     phases = {t.phase for t in hive.board.query(kind="task", mission_id=m.id)}
-    assert phases == {"understand", "report", "measure"}
+    assert phases == {"understand", "report", "measure", "bilan"}  # pas de cycle complet pour une question simple
     assert isinstance(m.data["score"], float)
 
 
@@ -65,7 +65,7 @@ def test_analysis_runs_full_cycle_with_independent_votes(hive):
 
 def test_action_requires_human_approval_then_executes(hive, tmp_path):
     m = run(run_mission(hive, "Écris le fichier de synthèse de notre stratégie"))
-    assert m.data["profile"] == "action" and m.status == "active"
+    assert m.data["profile"] == "action" and m.status == "awaiting_human"
     pending = hive.governance.pending_approvals()
     assert len(pending) == 1 and pending[0].data["assessment"]["risk_label"] == "modéré"
     target = Path(tmp_path) / "workspace" / "missions" / f"{m.id}.md"
@@ -96,8 +96,9 @@ def test_veto_escalates_to_human_and_upheld_veto_blocks_actions(hive):
     run(hive.colony.resolve_approval(ap.id, False, by="conseil"))
     run(hive.colony.run_until_idle())
     m = hive.board.get(m.id)
-    assert m.status == "done" and m.data.get("action_blocked")
-    assert not hive.board.query(kind="simulation", mission_id=m.id)
+    assert m.status == "done"
+    assert hive.board.query(kind="clearance", mission_id=m.id)[-1].status == "blocked"
+    assert not hive.board.query(kind="simulation", mission_id=m.id)  # aucune action n'est même planifiée
     assert hive.governance.pending_approvals() == []  # le vote/veto n'est pas rejoué en boucle
 
 
@@ -122,6 +123,7 @@ def test_protocol_enforcement_evidence_refs_and_forgery(hive):
     assert not hive.board.query(kind="decision", mission_id=m.id)
     whats = [e.payload["what"] for e in hive.ledger.events(types=["protocol.violation"])]
     assert any("interdit" in w for w in whats) and any("réservés" in w for w in whats)
+    assert hive.board.get(m.id).status == "done"
     assert any("hors phase" in w for w in whats)
 
 
@@ -134,7 +136,7 @@ def test_agents_ask_each_other_for_help(hive):
 
     script(hive, fn)
     m = run(run_mission(hive, "Que penser du télétravail ?"))
-    helps = [t for t in hive.board.query(kind="task", mission_id=m.id) if t.phase == "help"]
+    helps = [t for t in hive.board.query(kind="task", mission_id=m.id) if t.phase == "entraide"]
     assert len(helps) == 1 and helps[0].status == "done"
     assert helps[0].claimed_by == "sceptique"  # la plus compétente en critique, et pas la demandeuse
 
@@ -149,7 +151,7 @@ def test_discovery_recruits_a_verifier(hive):
     m = run(run_mission(hive, "Analyse la communication des abeilles"))
     disc = hive.board.query(kind="discovery", mission_id=m.id)[0]
     assert disc.pheromone > 2.5  # danse : intensité proportionnelle à la qualité annoncée
-    verify = [t for t in hive.board.query(kind="task", mission_id=m.id) if t.phase == "verify"]
+    verify = [t for t in hive.board.query(kind="task", mission_id=m.id) if t.phase == "verification"]
     assert verify and verify[0].claimed_by != disc.author
 
 

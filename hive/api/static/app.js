@@ -9,7 +9,8 @@ const state = { tab: "hive", lastSeq: 0, es: null, poll: null, files: [], curren
 const LABELS = {
   fact: "fait", hypothesis: "hypothèse", unknown: "inconnu", proposed: "proposée", active: "active",
   done: "terminée", stopped: "arrêtée", cancelled: "annulée", pending: "en attente", failed: "échec",
-  open: "ouverte", claimed: "en cours", rejected: "refusée", approved: "approuvée",
+  open: "ouverte", claimed: "en cours", rejected: "refusée", approved: "approuvée", awaiting_human: "attend le Conseil",
+  waiting: "attend une décision", granted: "autorisée", blocked: "bloquée", expired: "expirée",
 };
 const KIND = {
   mission: "🎯 mission", task: "📋 tâche", observation: "👁 observation", belief: "🧭 croyance",
@@ -17,13 +18,19 @@ const KIND = {
   forecast: "🔮 prévision", risk: "⚠ risque", opportunity: "✨ opportunité", option: "🔀 option",
   proposal: "🗳 proposition", decision: "⚖ décision", simulation: "🧪 simulation", approval: "✋ validation",
   result: "🛠 résultat", report: "📄 livrable", measurement: "📏 mesure", lesson: "🎓 leçon",
-  discovery: "💃 découverte", need: "🙋 besoin", message: "📣 directive", artifact: "📎 média", dream: "🌙 rêve",
+  discovery: "💃 découverte", need: "🙋 besoin", message: "📣 consigne", artifact: "📎 média", dream: "🌙 rêve",
+  clearance: "🛡 feu vert", spec: "📐 cahier des charges", script: "📝 scénario", translation: "🌍 traduction",
+  frame: "🖼 illustration", voice: "🎙 voix", subtitles: "💬 sous-titres", video: "🎬 vidéo", qa: "🔬 contrôle qualité",
+  delivery: "📦 livraison",
 };
 const STEP_LABELS = {
   observe: "Observer", understand: "Comprendre", confront: "Confronter", hypothesize: "Hypothèses",
   anticipate: "Anticiper", prioritize: "Prioriser", decide: "Décider", risk_review: "Risques",
   simulate: "Simuler", execute: "Exécuter", report: "Synthèse", measure: "Mesurer", learn: "Apprendre",
-  revise: "Réviser",
+  revise: "Réviser", quorum: "Quorum", arbitrage: "Arbitrage", bilan: "Bilan", entraide: "Entraide",
+  verification: "Vérification", cadrage: "Cadrage", scenario: "Scénario", traduction: "Traduction",
+  illustration: "Illustration", voix: "Voix", sous_titres: "Sous-titres", montage: "Montage", controle: "Contrôle",
+  correction: "Correction", revue: "Revue", livraison: "Livraison", lecons_studio: "Leçons",
 };
 
 function el(tag, attrs = {}, ...children) {
@@ -117,7 +124,7 @@ async function refreshStatus() {
   kill.classList.toggle("paused", s.paused);
   kill.setAttribute("aria-label", s.paused ? "Reprendre la ruche" : "Mettre la ruche en pause");
   $("#pill-budget").textContent = `${s.budget.spent.toFixed(2)} / ${s.budget.cap.toFixed(2)} €`;
-  $("#st-active").textContent = s.missions.active;
+  $("#st-active").textContent = s.missions.active + s.missions.awaiting_human;
   $("#st-tasks").textContent = s.open_tasks;
   $("#st-approvals").textContent = s.pending_approvals;
   const n = s.pending_approvals + s.proposed_lessons;
@@ -290,7 +297,7 @@ $("#mission-form").addEventListener("submit", async (e) => {
     $("#mission-text").value = "";
     state.files = [];
     renderAttachments();
-    toast(`Mission lancée (profil ${r.profile})`);
+    toast(`Mission #${r.number} lancée (profil ${r.profile})`);
     openMission(r.id);
   } catch (err) {
     toast(err.message);
@@ -303,10 +310,10 @@ async function loadMissions() {
   const ms = await api("/api/missions");
   $("#missions").replaceChildren(...ms.map((m) =>
     el("li", { class: "card clickable", onclick: () => openMission(m.id) },
-      el("h3", {}, m.text),
-      el("div", { class: "tags" }, tag(LABELS[m.status] || m.status, m.status), tag(m.profile),
-        m.step ? tag(`étape : ${STEP_LABELS[m.step] || m.step}`) : null,
-        m.waiting_on ? tag("attend votre décision", "taint") : null,
+      el("h3", {}, `#${m.number ?? "?"} · ${m.text}`),
+      el("div", { class: "tags" }, tag(m.status_fr || m.status, m.status), tag(m.profile),
+        m.rev > 1 ? tag(`révision ${m.rev}`) : null, m.outcome ? tag(m.outcome, "done") : null,
+        m.step ? tag(`en cours : ${m.step}`) : null,
         typeof m.score === "number" ? tag(`score ${Math.round(m.score * 100)} %`) : null,
         tag(fmtTime(m.created_at))))));
   if (!ms.length) $("#missions").append(el("li", { class: "muted small" }, "Aucune mission pour l'instant."));
@@ -320,64 +327,92 @@ function speak(text) {
   speechSynthesis.speak(u);
 }
 
+const artUrl = (id) => `/api/artifacts/${encodeURIComponent(id)}`;
+
+function mediaFor(d) {
+  const id = d.artifact || (d.input ? d.id : null);
+  if (!id) return null;
+  if (d.media === "video" || d.mime === "video/mp4") return el("video", { src: `${artUrl(id)}#t=1.5`, controls: true, playsinline: true, preload: "metadata", class: "media" });
+  if (d.media === "audio" || (d.mime || "").startsWith("audio/")) return el("audio", { src: artUrl(id), controls: true, preload: "none", class: "full" });
+  if (d.media === "image" && ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(d.mime)) return el("img", { src: artUrl(id), alt: d.name || d.scene || "image", class: "media", loading: "lazy" });
+  return el("a", { href: artUrl(id), download: "" }, "⬇ télécharger");
+}
+
 function cellCard(c) {
   const isReport = c.kind === "report";
   const d = c.data || {};
   const extras = [];
-  if (c.kind === "artifact" && d.id) {
-    const url = `/api/artifacts/${encodeURIComponent(d.id)}`;
-    if (d.media === "image" && ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(d.mime))
-      extras.push(el("img", { src: url, alt: d.name || "image", class: "media" }));
-    else if (d.media === "audio") extras.push(el("audio", { src: url, controls: true }));
-    else if (d.media === "video") extras.push(el("video", { src: url, controls: true, class: "media" }));
+  if (["artifact", "video", "voice", "subtitles", "frame"].includes(c.kind)) {
+    const m = mediaFor(d);
+    if (m) extras.push(m);
   }
-  if (d.option_key && c.kind !== "decision") extras.push(tag(`option : ${d.option_key}`));
-  if (typeof d.probability === "number") extras.push(tag(`p = ${Math.round(d.probability * 100)} %`));
-  if (d.veto) extras.push(tag("VETO", "taint"));
-  if (d.tally) extras.push(tag(`vote : ${Object.entries(d.tally).map(([k, v]) => `${k} ${v}`).join(" · ")}`));
-  if (typeof d.score === "number") extras.push(tag(`score ${Math.round(d.score * 100)} %`));
-  if (d.downgraded) extras.push(tag("rétrogradé : pas de preuve", "hypothesis"));
-  if (d.exec_status) extras.push(tag(`exécution : ${d.exec_status}`));
+  if (c.kind === "qa" && Array.isArray(d.checks)) {
+    extras.push(el("ul", { class: "small checks" }, d.checks.map((k) =>
+      el("li", { class: k.ok ? "ok" : (k.critical ? "ko" : "warn") }, `${k.ok ? "✓" : k.critical ? "✗" : "!"} ${k.check}${k.detail ? ` — ${k.detail}` : ""}`))));
+  }
+  const tags = [];
+  if (d.option_key && c.kind !== "decision") tags.push(tag(`option : ${d.option_key}`));
+  if (typeof d.probability === "number") tags.push(tag(`p = ${Math.round(d.probability * 100)} %`));
+  if (d.veto) tags.push(tag("VETO", "taint"));
+  if (d.tally) tags.push(tag(`vote : ${Object.entries(d.tally).map(([k, v]) => `${k} ${v}`).join(" · ")}`));
+  if (typeof d.score === "number") tags.push(tag(`score ${Math.round(d.score * 100)} %`));
+  if (d.downgraded) tags.push(tag("rétrogradé : pas de preuve", "hypothesis"));
+  if (d.exec_status) tags.push(tag(`exécution : ${d.exec_status}`));
+  if (d.cached_from) tags.push(tag("réutilisé (cache)"));
   return el("div", { class: `card cell ${isReport ? "report" : ""}` },
     el("div", { class: "tags" }, tag(KIND[c.kind] || c.kind), el("b", { class: "small" }, c.author),
       c.status ? tag(LABELS[c.status] || c.status, c.status) : null,
       c.confidence != null ? tag(`conf. ${Math.round(c.confidence * 100)} %`) : null,
       c.taint ? tag("données externes", "taint") : null, c.refs?.length ? tag(`${c.refs.length} preuve(s)`) : null),
-    el("div", { class: "mt" }, c.content),
-    extras.length ? el("div", { class: "tags" }, extras) : null,
+    c.kind === "frame" ? null : el("div", { class: "mt" }, c.content),
+    tags.length ? el("div", { class: "tags" }, tags) : null,
+    extras.length ? el("div", { class: "mt" }, extras) : null,
     isReport ? el("div", { class: "feedback" }, el("button", { class: "ghost", onclick: () => speak(c.content) }, "🔊 Écouter")) : null);
 }
 
 async function openMission(id, silent = false) {
   state.current = id;
   if (!silent) showTab("mission");
-  const { mission: m, cells } = await api(`/api/missions/${encodeURIComponent(id)}`);
-  const plan = m.data.plan || [];
-  const idx = m.data.step_index ?? -1;
-  const steps = el("div", { class: "steps" }, plan.map((s, i) =>
-    el("span", { class: `step ${i < idx || m.status === "done" ? "done" : i === idx ? "current" : ""}` }, STEP_LABELS[s] || s)));
-  const head = el("div", { class: "card" }, el("h3", {}, m.content),
-    el("div", { class: "tags" }, tag(LABELS[m.status] || m.status, m.status), tag(m.data.profile),
-      typeof m.data.score === "number" ? tag(`score ${Math.round(m.data.score * 100)} %`) : null,
-      m.data.end_reason ? tag(m.data.end_reason) : null), steps,
-    m.status === "active" ? el("button", { class: "ghost danger", onclick: async () => {
+  const { mission: m, cells, brief: b } = await api(`/api/missions/${encodeURIComponent(id)}`);
+  const rev = b.rev;
+  const workers = el("div", { class: "steps" }, Object.entries(b.workers).map(([w, st]) =>
+    el("span", { class: `step ${st === "✓" ? "done" : st === "…" ? "current" : ""}` }, STEP_LABELS[w] || w)));
+  const note = el("textarea", { rows: 2, maxlength: 2000, placeholder: "Consigne pour une nouvelle révision (ex. « ajoute le violet »)…" });
+  const head = el("div", { class: "card" }, el("h3", {}, `#${b.number} · ${m.content}`),
+    el("div", { class: "tags" }, tag(b.status_fr, m.status), tag(b.profile), tag(`révision ${rev}`),
+      b.outcome ? tag(b.outcome, "done") : null,
+      typeof b.score === "number" ? tag(`score ${Math.round(b.score * 100)} %`) : null,
+      b.end_reason ? tag(b.end_reason) : null, tag(`budget ${b.budget.spent} / ${b.budget.cap} €`)), workers,
+    b.history.length > 1 ? el("details", {}, el("summary", { class: "small muted" }, `Historique (${b.history.length - 1} révision(s))`),
+      ...b.history.slice(1).map((h) => el("div", { class: "small" }, `Rév. ${h.rev} · ${h.auto ? "correction automatique" : h.by} : ${h.note}`))) : null,
+    ["done", "stopped"].includes(m.status) ? el("div", { class: "mt" }, note,
+      el("button", { class: "ghost", onclick: async () => {
+        if (!note.value.trim()) return toast("Écrivez une consigne.");
+        await api(`/api/missions/${encodeURIComponent(id)}/revise`, { method: "POST", body: { note: note.value.trim() } });
+        toast("Révision lancée"); openMission(id, true);
+      } }, "🔁 Demander une révision")) : null,
+    ["active", "awaiting_human"].includes(m.status) ? el("button", { class: "ghost danger", onclick: async () => {
       if (!confirm("Annuler cette mission ?")) return;
       await api(`/api/missions/${encodeURIComponent(id)}/cancel`, { method: "POST" });
       openMission(id, true);
     } }, "Annuler la mission") : null);
-  const visible = cells.filter((c) => c.kind !== "task" && c.kind !== "mission");
-  const reports = visible.filter((c) => c.kind === "report");
+  const current = cells.filter((c) => c.kind !== "task" && c.kind !== "mission" && (c.rev === rev || c.kind === "artifact"));
   const blocks = [head];
-  if (reports.length) {
-    blocks.push(el("div", { class: "phase-title" }, "Livrable"), ...reports.map(cellCard));
+  for (const a of b.pending_approvals) blocks.push(el("div", { class: "card warnbox" }, "✋ ", a.title, " → onglet Valider"));
+  const deliverables = current.filter((c) => ["report", "video"].includes(c.kind));
+  if (deliverables.length) {
+    blocks.push(el("div", { class: "phase-title" }, "Livrables"), ...deliverables.map(cellCard));
     blocks.push(el("div", { class: "feedback" },
       el("button", { class: "ok", onclick: () => sendFeedback(id, 1) }, "👍 Utile"),
       el("button", { class: "ghost", onclick: () => sendFeedback(id, 0.5) }, "😐 Mitigé"),
       el("button", { class: "no", onclick: () => sendFeedback(id, 0) }, "👎 Inutile")));
   }
+  const frames = current.filter((c) => c.kind === "frame");
+  if (frames.length) blocks.push(el("div", { class: "phase-title" }, `Illustrations (${frames.length})`),
+    el("div", { class: "grid" }, frames.map((f) => mediaFor(f.data))));
   let lastPhase = null;
-  for (const c of visible) {
-    if (c.kind === "report") continue;
+  for (const c of current) {
+    if (["report", "video", "frame"].includes(c.kind)) continue;
     const ph = c.phase || (c.kind === "artifact" ? "observe" : "autre");
     if (ph !== lastPhase) {
       blocks.push(el("div", { class: "phase-title" }, STEP_LABELS[ph] || ph));
@@ -385,10 +420,14 @@ async function openMission(id, silent = false) {
     }
     blocks.push(cellCard(c));
   }
-  const tasks = cells.filter((c) => c.kind === "task");
-  blocks.push(el("details", {}, el("summary", { class: "muted small" }, `Tâches et enchères (${tasks.length})`),
+  const older = cells.filter((c) => c.rev < rev && !["task", "mission", "artifact"].includes(c.kind));
+  if (older.length) blocks.push(el("details", {}, el("summary", { class: "muted small" }, `Révisions précédentes (${older.length} traces)`),
+    ...older.map(cellCard)));
+  const tasks = cells.filter((c) => c.kind === "task" && c.rev === rev);
+  blocks.push(el("details", {}, el("summary", { class: "muted small" }, `Travaux et enchères (${tasks.length})`),
     ...tasks.map((t) => el("div", { class: "card small" }, `${t.content} — ${LABELS[t.status] || t.status}`,
-      t.claimed_by ? ` · ${t.claimed_by}` : "", t.data?.bids ? el("pre", { class: "json" }, JSON.stringify(t.data.bids)) : null,
+      t.claimed_by ? ` · ${t.claimed_by}` : "", t.data?.cached ? " · cache" : "",
+      t.data?.bids ? el("pre", { class: "json" }, JSON.stringify(t.data.bids)) : null,
       t.data?.error ? el("div", { class: "danger" }, t.data.error) : null))));
   $("#mission-detail").replaceChildren(...blocks);
 }
@@ -403,21 +442,25 @@ async function loadApprovals() {
   const d = await api("/api/approvals");
   $("#approvals").replaceChildren(...(d.approvals.length ? d.approvals.map((a) => {
     const as = a.data.assessment || {};
-    const comment = el("input", { placeholder: "Commentaire (optionnel)", maxlength: 1000, class: "full mt" });
+    const isDelivery = a.data.action?.type === "delivery";
+    const comment = el(isDelivery ? "textarea" : "input", { placeholder: isDelivery ? "Motif d'un refus : il deviendra la consigne de la révision suivante" : "Commentaire (optionnel)", maxlength: 1000, class: "full mt", rows: 2 });
     const act = async (approved) => {
+      if (!approved && isDelivery && !comment.value.trim()) return toast("Indiquez ce qui doit changer.");
       if (approved && as.risk >= 2 && !confirm("Risque élevé : confirmer l'autorisation ?")) return;
       await api(`/api/approvals/${encodeURIComponent(a.id)}`, { method: "POST", body: { approved, comment: comment.value } });
-      toast(approved ? "Autorisé" : "Refusé");
+      toast(approved ? "Autorisé" : (isDelivery ? "Refusé : révision lancée" : "Refusé"));
       loadApprovals();
       refreshStatus();
     };
+    const previews = (a.data.preview || []).map((id) => el("video", { src: `${artUrl(id)}#t=1.5`, controls: true, playsinline: true, preload: "metadata", class: "media" }));
     return el("div", { class: "card" }, el("h3", {}, a.content),
       el("div", { class: `small risk-${as.risk}` }, `Risque ${as.risk_label || "?"}`),
       el("ul", { class: "small" }, (as.reasons || []).map((r) => el("li", {}, r))),
-      el("div", { class: "small muted" }, "Simulation : ", a.data.simulation || ""),
-      el("pre", { class: "json" }, JSON.stringify(a.data.action, null, 1)), comment,
-      el("div", { class: "decide" }, el("button", { class: "ok", onclick: () => act(true) }, "Autoriser"),
-        el("button", { class: "no", onclick: () => act(false) }, "Refuser")));
+      ...previews,
+      el("div", { class: "small muted mt" }, a.data.simulation || ""),
+      isDelivery ? null : el("pre", { class: "json" }, JSON.stringify(a.data.action, null, 1)), comment,
+      el("div", { class: "decide" }, el("button", { class: "ok", onclick: () => act(true) }, isDelivery ? "✅ Livrer" : "Autoriser"),
+        el("button", { class: "no", onclick: () => act(false) }, isDelivery ? "⛔ Refuser et réviser" : "Refuser")));
   }) : [el("p", { class: "muted small" }, "Rien à valider. La ruche travaille.")]));
 
   $("#lessons").replaceChildren(...(d.lessons.length ? d.lessons.map((l) => el("div", { class: "card" },

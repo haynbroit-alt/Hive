@@ -23,15 +23,18 @@ from .core.llm import Router, build_provider
 from .core.media import ArtifactStore, Transcriber
 from .core.reputation import Reputation
 from .core.tools import default_tools
+from .packs.conseil import conseil_workers
 from .roster import default_roster
+from .studio.workers import studio_workers
 
 DEFAULTS: dict[str, Any] = {
     "data_dir": "data",
     "server": {"host": "127.0.0.1", "port": 8765},
-    "colony": {"parallelism": 3, "quorum": 0.5, "half_life_s": 900, "tick_s": 1.0},
-    "policy": {"budget_cap_eur": 0.0, "auto_execute_max": "faible", "max_steps_per_mission": 60,
-               "max_llm_calls_per_mission": 80, "max_mission_seconds": 3600,
-               "require_human_for_lessons": True},
+    "colony": {"parallelism": 3, "mechanical_parallelism": 4, "quorum": 0.5, "half_life_s": 900, "tick_s": 1.0},
+    "policy": {"budget_cap_eur": 0.0, "mission_budget_eur": 0.0, "auto_execute_max": "faible",
+               "max_steps_per_mission": 120, "max_llm_calls_per_mission": 120, "max_events_per_mission": 4000,
+               "max_mission_seconds": 3600, "max_revisions": 3, "require_human_for_lessons": True},
+    "studio": {"width": 1280, "height": 720, "fps": 25, "burn_text": True, "tts": {}},
     "providers": {
         "offline": {"type": "offline"},
         # Modèle local via Ollama (0 €). Ignoré automatiquement si Ollama ne tourne pas.
@@ -95,10 +98,13 @@ def build_hive(config: dict[str, Any] | None = None, *, in_memory: bool = False)
     pol = cfg["policy"]
     policy = Policy(
         budget_cap_eur=float(pol["budget_cap_eur"]),
+        mission_budget_eur=float(pol["mission_budget_eur"]),
         auto_execute_max=RISK_LABELS.get(str(pol["auto_execute_max"]).lower(), Risk.LOW),
         max_steps_per_mission=int(pol["max_steps_per_mission"]),
         max_llm_calls_per_mission=int(pol["max_llm_calls_per_mission"]),
+        max_events_per_mission=int(pol["max_events_per_mission"]),
         max_mission_seconds=float(pol["max_mission_seconds"]),
+        max_revisions=int(pol["max_revisions"]),
         require_human_for_lessons=bool(pol["require_human_for_lessons"]),
     )
     governance = Governance(ledger, board, policy)
@@ -110,6 +116,9 @@ def build_hive(config: dict[str, Any] | None = None, *, in_memory: bool = False)
     artifacts = ArtifactStore(work_root / "artifacts")
     colony = Colony(ledger=ledger, board=board, governance=governance, reputation=reputation, router=router,
                     tools=tools, artifacts=artifacts, agents=default_roster(cfg.get("models")),
+                    workers=conseil_workers() + studio_workers(), workdir=work_root / "work",
+                    options={"studio": cfg.get("studio") or {},
+                             "mechanical_parallelism": int(cfg["colony"].get("mechanical_parallelism", 4))},
                     transcriber=Transcriber(cfg.get("stt") or {}),
                     parallelism=int(cfg["colony"]["parallelism"]), quorum=float(cfg["colony"]["quorum"]),
                     vision_models=list((cfg.get("models") or {}).get("vision")

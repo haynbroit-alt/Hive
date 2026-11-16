@@ -11,6 +11,7 @@ def make_hive(tmp_path, **policy):
     cfg["providers"] = {"offline": {"type": "offline"}}
     cfg["_tmp_dir"] = str(tmp_path)
     cfg["policy"].update(policy)
+    cfg["studio"].update(width=320, height=180, fps=8)  # rapide en test, mêmes contrôles qu'en vrai
     return build_hive(cfg, in_memory=True)
 
 

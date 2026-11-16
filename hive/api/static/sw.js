@@ -1,6 +1,6 @@
 /* Service worker HIVE : met en cache la coquille de l'application uniquement.
    Les données (/api/*) ne sont JAMAIS mises en cache : toujours fraîches, jamais stockées. */
-const CACHE = "hive-shell-v1";
+const CACHE = "hive-shell-v2";
 const SHELL = ["/", "/static/style.css", "/static/app.js", "/static/icon.svg", "/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {

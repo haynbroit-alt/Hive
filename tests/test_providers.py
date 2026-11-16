@@ -1,35 +1,28 @@
 """Fournisseurs de modèles : forme des requêtes (sans réseau, transport simulé)."""
 import json
 
-import httpx
 import pytest
 
+from hive.core import http
 from hive.core.llm import LLMRequest, OllamaProvider, OpenAICompatProvider, ProviderError
 from tests.conftest import run
 
 
-def patch_httpx(monkeypatch, handler):
-    real = httpx.AsyncClient
-
-    class Fake(real):
-        def __init__(self, *a, **kw):
-            kw["transport"] = httpx.MockTransport(handler)
-            super().__init__(*a, **kw)
-
-    monkeypatch.setattr(httpx, "AsyncClient", Fake)
+def fake_transport(monkeypatch, handler):
+    monkeypatch.setattr(http, "transport", handler)
 
 
 def test_ollama_request_shape_with_image(monkeypatch):
     seen = {}
 
-    def handler(req):
-        if req.url.path == "/api/tags":
-            return httpx.Response(200, json={"models": []})
-        seen.update(json.loads(req.content))
-        return httpx.Response(200, json={"message": {"content": '{"cells": []}'},
-                                         "prompt_eval_count": 12, "eval_count": 5})
+    def handler(req: http.Request) -> http.Response:
+        if req.url.endswith("/api/tags"):
+            return http.Response(200, b'{"models": []}')
+        seen.update(json.loads(req.body))
+        return http.Response(200, json.dumps({"message": {"content": '{"cells": []}'},
+                                               "prompt_eval_count": 12, "eval_count": 5}).encode())
 
-    patch_httpx(monkeypatch, handler)
+    fake_transport(monkeypatch, handler)
     p = OllamaProvider("local", "gemma4:e4b")
     assert run(p.available())
     r = run(p.complete(LLMRequest("sys", "prompt", images=[(b"\x89PNG", "image/png")])))
@@ -41,13 +34,13 @@ def test_openai_compatible_request_and_cost(monkeypatch):
     monkeypatch.setenv("K", "secret")
     seen = {}
 
-    def handler(req):
-        seen["auth"] = req.headers.get("authorization")
-        seen["body"] = json.loads(req.content)
-        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}],
-                                         "usage": {"prompt_tokens": 1_000_000, "completion_tokens": 0}})
+    def handler(req: http.Request) -> http.Response:
+        seen["auth"] = req.headers.get("Authorization")
+        seen["body"] = json.loads(req.body)
+        return http.Response(200, json.dumps({"choices": [{"message": {"content": "ok"}}],
+                                              "usage": {"prompt_tokens": 1_000_000, "completion_tokens": 0}}).encode())
 
-    patch_httpx(monkeypatch, handler)
+    fake_transport(monkeypatch, handler)
     p = OpenAICompatProvider("groq", "m", "https://api.example.test/v1", "K", price_in=0.5)
     r = run(p.complete(LLMRequest("s", "p", images=[(b"x", "image/jpeg")])))
     assert seen["auth"] == "Bearer secret" and seen["body"]["response_format"] == {"type": "json_object"}
@@ -56,6 +49,13 @@ def test_openai_compatible_request_and_cost(monkeypatch):
 
 
 def test_provider_errors_are_contained(monkeypatch):
-    patch_httpx(monkeypatch, lambda req: httpx.Response(500, json={}))
+    fake_transport(monkeypatch, lambda req: http.Response(500, b"{}"))
     with pytest.raises(ProviderError):
         run(OpenAICompatProvider("x", "m", "https://api.example.test/v1").complete(LLMRequest("s", "p")))
+
+
+def test_multipart_encoding_is_well_formed():
+    body, ctype = http.multipart({"chat_id": 42}, {"video": ("v.mp4", b"\x00\x01", "video/mp4")})
+    boundary = ctype.split("boundary=")[1]
+    assert body.startswith(f"--{boundary}".encode()) and body.rstrip().endswith(f"--{boundary}--".encode())
+    assert b'name="video"; filename="v.mp4"' in body and b"\x00\x01" in body

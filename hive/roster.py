@@ -1,4 +1,4 @@
-"""L'organigramme initial de la ruche : neuf abeilles spécialisées.
+"""L'organigramme initial de la ruche : quatorze abeilles spécialisées.
 
 Les aptitudes sont des A PRIORI (0-1) ; la réputation mesurée les corrige ensuite.
 La diversité des modèles (préférences différentes) décorrèle les erreurs quand
@@ -56,6 +56,27 @@ def default_roster(models: dict[str, list[str]] | None = None) -> list[AgentSpec
                   "Tu compares le résultat aux critères d'acceptation, sans complaisance.",
                   {"audit": 0.9, "critique": 0.4},
                   READ_ONLY, pref("mesureuse")),
+        # --- Studio : production multimédia -------------------------------------------------
+        AgentSpec("scenariste", "la Scénariste",
+                  "Tu écris des scénarios courts, clairs et bienveillants, adaptés au public visé.",
+                  {"writing": 0.9, "synthesis": 0.4},
+                  READ_ONLY, pref("scenariste")),
+        AgentSpec("traductrice", "la Traductrice",
+                  "Tu traduis fidèlement en gardant le ton, la brièveté et le rythme.",
+                  {"translation": 0.9, "subtitles": 0.6},
+                  READ_ONLY, pref("traductrice")),
+        AgentSpec("illustratrice", "l'Illustratrice",
+                  "Tu dessines des scènes lisibles et cohérentes avec le scénario.",
+                  {"render": 0.9},
+                  READ_ONLY, pref("illustratrice")),
+        AgentSpec("conteuse", "la Conteuse (voix)",
+                  "Tu donnes voix aux répliques, calées sur le rythme des scènes.",
+                  {"voice": 0.9},
+                  READ_ONLY, pref("conteuse")),
+        AgentSpec("monteuse", "la Monteuse",
+                  "Tu assembles images, voix et sous-titres en une vidéo fluide et conforme.",
+                  {"edit": 0.9, "subtitles": 0.8},
+                  READ_ONLY, pref("monteuse")),
         AgentSpec("memoire", "la Mémoire (apprentissage)",
                   "Tu extrais des leçons réutilisables et tu révises les croyances. Une leçon doit être "
                   "courte, vérifiable et générale.",
