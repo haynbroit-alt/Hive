@@ -14,8 +14,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import httpx
-
+from . import http
 from .governance import Risk
 
 
@@ -185,13 +184,12 @@ class WebFetchTool(Tool):
         if not self.allowed(args):
             raise ToolError("domaine non autorisé")
         try:
-            async with httpx.AsyncClient(timeout=20, follow_redirects=False) as c:
-                r = await c.get(str(args["url"]), headers={"User-Agent": "hive-colony/0.1"})
-        except httpx.HTTPError as e:
+            r = await http.request("GET", str(args["url"]), timeout=20)
+        except http.HTTPError as e:
             raise ToolError(f"échec réseau : {e}") from e
-        body = r.content[: self.max_bytes].decode(r.encoding or "utf-8", errors="replace")
+        body = r.content[: self.max_bytes].decode("utf-8", errors="replace")
         text = " ".join(_TAGS.sub(" ", body).split())
-        return ToolResult(text[:8000], taint=True, data={"status": r.status_code})
+        return ToolResult(text[:8000], taint=True, data={"status": r.status})
 
 
 # -- webhook.post : effet EXTERNE, toujours sous validation ---------------------------
@@ -215,11 +213,10 @@ class WebhookPostTool(Tool):
         if not self.allowed(args):
             raise ToolError("URL non autorisée")
         try:
-            async with httpx.AsyncClient(timeout=20) as c:
-                r = await c.post(str(args["url"]), json=args.get("payload"))
-        except httpx.HTTPError as e:
+            r = await http.request("POST", str(args["url"]), json=args.get("payload"), timeout=20)
+        except http.HTTPError as e:
             raise ToolError(f"échec réseau : {e}") from e
-        return ToolResult(f"HTTP {r.status_code}", data={"status": r.status_code})
+        return ToolResult(f"HTTP {r.status}", data={"status": r.status})
 
 
 class ToolRegistry:

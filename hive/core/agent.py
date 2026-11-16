@@ -105,12 +105,9 @@ class Agent:
             learned, w = score.mean, score.evidence / (score.evidence + 5.0)
         return ((1 - w) * prior + w * learned) * rec.calibration_weight()
 
-    def bid(self, task: Cell) -> float:
+    def bid_skill(self, skill: str) -> float:
         if self.spec.ttl_tasks is not None and self.tasks_done >= self.spec.ttl_tasks:
             return 0.0
-        if self.name in (task.data.get("exclude") or []):
-            return 0.0
-        skill = task.skills[0] if task.skills else "analysis"
         return round(self.competence(skill), 4)
 
     def build_request(self, *, phase: Phase, mission: Cell, task: Cell, ctx: list[dict[str, Any]],

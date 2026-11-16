@@ -145,7 +145,25 @@ s'ils n'apportent rien.
 | HIVE fait mieux qu'un agent seul | **Inconnue** | À mesurer au jour 5 |
 | Le tag Ollama `gemma4:e4b` est exact | Moyenne | Vu dans des extraits de recherche, page non lue directement |
 
-## 7. Ce dont j'ai besoin de vous
+## 7. v0.2 : de l'analyse à la production
+
+Retour du Conseil : « fais largement mieux » qu'un pilote à base de traces. Réponse :
+
+- **La stigmergie est devenue le moteur.** Aucune séquence n'est codée en dur. Chaque ouvrière
+  déclare ce qu'elle attend et ce qu'elle produit, et démarre seule quand ses traces existent. Le
+  cycle cognitif et le Studio tournent sur ce même moteur.
+- **La ruche produit.** Sur le brief « Vidéo 30s fr/en : la pomme et la poire apprennent les
+  couleurs », elle livre deux vraies vidéos MP4, mesurées et contrôlées, sans modèle payant ni
+  connexion **[prouvé : démo et tests]**.
+- **Elle se corrige et apprend sous contrôle :**
+  - un refus motivé du Conseil devient la consigne de la révision suivante ;
+  - seul ce qui a changé est refait (cache) ;
+  - une correction automatique qui ne progresse pas rend la main au Conseil ;
+  - un refus devient une leçon proposée, appliquée aux missions suivantes seulement après accord.
+- **Inconnu :** la qualité d'un scénario écrit par un petit modèle local, et la satisfaction d'un
+  vrai public (enfants) face à une voix de synthèse robotique.
+
+## 8. Ce dont j'ai besoin de vous
 
 Voir la fin du README et la ROADMAP : votre matériel (pour le modèle local), votre canal préféré
 (Telegram, l'application via Tailscale, ou les deux), votre accord ou non pour un secours cloud

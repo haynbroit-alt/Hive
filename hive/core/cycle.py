@@ -11,7 +11,7 @@ D'où les PROFILS : une question simple ne traverse pas 13 phases.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -64,28 +64,24 @@ PHASES: dict[str, Phase] = {p.key: p for p in [
     Phase("learn", "APPRENDRE", "memory", frozenset({"lesson"}),
           "Propose au plus 2 leçons réutilisables (data.type = skill ou rule, data.applies_to). "
           "Elles ne seront actives qu'après validation du Conseil."),
+    Phase("entraide", "ENTRAIDE", "analysis",
+          frozenset({"observation", "belief", "hypothesis", "discovery", "confirmation", "contradiction"}),
+          "Réponds à la demande d'aide d'une autre abeille (cellule ciblée), avec preuves et confiance calibrée."),
+    Phase("verification", "VÉRIFICATION", "critique", frozenset({"confirmation", "contradiction"}),
+          "Vérifie la découverte annoncée (cellule ciblée) : confirme avec preuves ou réfute."),
     Phase("revise", "RÉVISER", "analysis", frozenset({"belief"}),
           "Révise le modèle du monde à la lumière de la mission : pour chaque croyance à corriger, "
           "dépose une croyance avec data.revises = id de l'ancienne, nouveau statut et confiance."),
 ]}
 
-# Étapes gérées par la colonie elle-même (pas par un agent)
-COLONY_STEPS = {"execute"}
-
-PROFILES: dict[str, list[str]] = {
-    "rapide": ["understand", "report", "measure"],
-    "analyse": ["observe", "understand", "confront", "hypothesize", "anticipate", "prioritize",
-                "decide", "risk_review", "report", "measure", "learn", "revise"],
-    "action": ["observe", "understand", "confront", "hypothesize", "anticipate", "prioritize",
-               "decide", "risk_review", "simulate", "execute", "report", "measure", "learn", "revise"],
-}
-
 PROFILE_LABELS = {
-    "rapide": "Question simple : un minimum d'agents, réponse directe.",
+    "rapide": "Question simple : un minimum d'abeilles, réponse directe.",
     "analyse": "Analyse / décision : cycle cognitif complet, sans action réelle.",
     "action": "Action : cycle complet + simulation + exécution sous contrôle humain.",
+    "studio": "Production multimédia : script, images, voix, sous-titres, montage, contrôle qualité, livraison validée.",
 }
 
+STUDIO_WORDS = ("vidéo", "video", "clip", "dessin animé", "animation", "court-métrage", "film ")
 ACTION_WORDS = ("envoie", "publie", "poste", "écris le fichier", "crée le fichier", "exécute",
                 "déploie", "achète", "paie", "commande", "supprime", "planifie l'envoi")
 ANALYSIS_WORDS = ("analyse", "compare", "stratégie", "décide", "décision", "risque", "évalue",
@@ -95,21 +91,10 @@ ANALYSIS_WORDS = ("analyse", "compare", "stratégie", "décide", "décision", "r
 def triage(text: str, has_attachments: bool) -> str:
     """Triage déterministe (sans LLM) : simple par défaut, complexe si nécessaire."""
     t = text.lower()
+    if any(w in t for w in STUDIO_WORDS) and not any(w in t for w in ("analyse cette", "résume cette", "regarde cette")):
+        return "studio"
     if any(w in t for w in ACTION_WORDS):
         return "action"
     if any(w in t for w in ANALYSIS_WORDS) or len(t) > 280:
         return "analyse"
     return "rapide"
-
-
-@dataclass
-class Plan:
-    profile: str
-    steps: list[str] = field(default_factory=list)
-
-
-def make_plan(profile: str, has_attachments: bool) -> Plan:
-    steps = list(PROFILES[profile])
-    if has_attachments and "observe" not in steps:
-        steps.insert(0, "observe")
-    return Plan(profile, steps)

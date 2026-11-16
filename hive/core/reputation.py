@@ -52,8 +52,7 @@ class Reputation:
     def __init__(self, ledger: Ledger):
         self.ledger = ledger
         self.records: dict[str, AgentRecord] = {}
-        for ev in ledger.events(types=["reputation.updated", "calibration.scored", "task.finished"]):
-            self._apply(ev)
+        ledger.register(self)
 
     def record(self, agent: str) -> AgentRecord:
         return self.records.setdefault(agent, AgentRecord())
@@ -69,22 +68,20 @@ class Reputation:
     def update(self, agent: str, skill: str, score: float, weight: float = 1.0,
                reason: str = "", mission_id: str | None = None) -> None:
         score = max(0.0, min(1.0, float(score)))
-        ev = self.ledger.append("reputation.updated", "systeme",
-                                {"agent": agent, "skill": skill, "score": score,
-                                 "weight": float(weight), "reason": reason}, mission_id=mission_id)
-        self._apply(ev)
+        self.ledger.append("reputation.updated", "systeme",
+                           {"agent": agent, "skill": skill, "score": score,
+                            "weight": float(weight), "reason": reason}, mission_id=mission_id)
 
     def score_forecast(self, agent: str, probability: float, outcome: bool,
                        forecast_id: str, mission_id: str | None = None) -> float:
         brier = (float(probability) - (1.0 if outcome else 0.0)) ** 2
-        ev = self.ledger.append("calibration.scored", "systeme",
-                                {"agent": agent, "forecast_id": forecast_id,
-                                 "probability": float(probability), "outcome": bool(outcome),
-                                 "brier": brier}, mission_id=mission_id)
-        self._apply(ev)
+        self.ledger.append("calibration.scored", "systeme",
+                           {"agent": agent, "forecast_id": forecast_id,
+                            "probability": float(probability), "outcome": bool(outcome),
+                            "brier": brier}, mission_id=mission_id)
         return brier
 
-    def _apply(self, ev: Event) -> None:
+    def apply(self, ev: Event) -> None:
         p = ev.payload
         if ev.type == "reputation.updated":
             s = self.record(p["agent"]).skills.setdefault(p["skill"], SkillScore())
@@ -94,11 +91,11 @@ class Reputation:
             rec = self.record(p["agent"])
             rec.brier_sum += p["brier"]
             rec.brier_n += 1
-        elif ev.type == "task.finished":
-            rec = self.record(p["agent"])
-            if p.get("ok"):
+        elif ev.type == "run.finished" and p.get("bee"):
+            rec = self.record(p["bee"])
+            if p.get("status") in ("done", "cached"):
                 rec.tasks_done += 1
-            else:
+            elif p.get("status") == "failed":
                 rec.tasks_failed += 1
 
     def snapshot(self) -> dict[str, dict]:

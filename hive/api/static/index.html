@@ -64,13 +64,14 @@
       <div id="tab-missions" class="tab" hidden>
         <form id="mission-form" class="composer">
           <textarea id="mission-text" rows="3" maxlength="8000"
-                    placeholder="Confiez une mission à la ruche (texte, voix, photo, vidéo)…" required></textarea>
+                    placeholder="Confiez une mission (ex. « Vidéo 30s fr/en : la pomme et la poire apprennent les couleurs »)…" required></textarea>
           <div class="composer-tools">
             <select id="mission-profile" aria-label="Profil">
               <option value="auto">Profil auto</option>
               <option value="rapide">Rapide</option>
               <option value="analyse">Analyse</option>
               <option value="action">Action</option>
+              <option value="studio">Studio (vidéo)</option>
             </select>
             <label class="icon-btn" title="Photo, vidéo, audio, texte">📎
               <input id="mission-files" type="file" multiple accept="image/*,video/*,audio/*,text/*,.pdf" hidden>

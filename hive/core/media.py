@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-import httpx
+from . import http
 
 ALLOWED_PREFIXES = ("image/", "audio/", "video/", "text/")
 ALLOWED_EXACT = {"application/pdf", "application/json"}
@@ -180,12 +180,10 @@ class Transcriber:
         if b == "openai":
             url = self.spec["base_url"].rstrip("/") + "/audio/transcriptions"
             headers = {"Authorization": f"Bearer {os.environ[self.spec['api_key_env']]}"}
-            with open(path, "rb") as fh:
-                files = {"file": (Path(path).name, fh.read())}
-            async with httpx.AsyncClient(timeout=300) as c:
-                r = await c.post(url, headers=headers, files=files,
-                                 data={"model": self.spec.get("model", "whisper-large-v3-turbo"),
-                                       "language": self.spec.get("language", "fr")})
-                r.raise_for_status()
-                return r.json().get("text", "")
+            files = {"file": (Path(path).name, Path(path).read_bytes(), "application/octet-stream")}
+            r = await http.request("POST", url, headers=headers, files=files, timeout=300,
+                                   data={"model": self.spec.get("model", "whisper-large-v3-turbo"),
+                                         "language": self.spec.get("language", "fr")})
+            r.raise_for_status()
+            return r.json().get("text", "")
         return None

@@ -47,11 +47,14 @@ class ColonyPaused(Exception):
 
 @dataclass
 class Policy:
-    budget_cap_eur: float = 0.0               # plafond de dépense autorisé (0 € par défaut)
+    budget_cap_eur: float = 0.0               # plafond GLOBAL de dépense (0 € par défaut)
+    mission_budget_eur: float = 0.0           # enveloppe par défaut d'une mission (recharge possible)
     auto_execute_max: Risk = Risk.LOW         # au-delà : validation humaine obligatoire
-    max_steps_per_mission: int = 60           # disjoncteurs (pannes en cascade)
-    max_llm_calls_per_mission: int = 80
+    max_steps_per_mission: int = 120          # disjoncteurs (pannes en cascade)
+    max_llm_calls_per_mission: int = 120
+    max_events_per_mission: int = 4000
     max_mission_seconds: float = 3600.0
+    max_revisions: int = 3                    # révisions (humaines + automatiques) par mission
     approval_ttl_s: float = 7 * 24 * 3600.0
     require_human_for_lessons: bool = True    # anti-empoisonnement de la mémoire
 
@@ -69,44 +72,61 @@ class Assessment:
 
 
 class Budget:
-    """Grand livre des dépenses (événementiel). Montants dans la devise du plafond."""
+    """Grand livre des dépenses (projection du registre) : plafond global ET enveloppe par mission."""
 
     def __init__(self, ledger: Ledger, policy: Policy):
         self.ledger = ledger
         self.policy = policy
         self.spent = 0.0
-        for ev in ledger.events(types=["budget.charged", "budget.cap_changed"]):
-            self._apply(ev)
+        self.mission_spent: dict[str, float] = {}
+        self.mission_extra: dict[str, float] = {}
+        ledger.register(self)
 
-    def _apply(self, ev) -> None:
+    def apply(self, ev) -> None:
         if ev.type == "budget.charged":
-            self.spent += float(ev.payload["amount"])
+            amount = float(ev.payload["amount"])
+            self.spent += amount
+            if ev.mission_id:
+                self.mission_spent[ev.mission_id] = self.mission_spent.get(ev.mission_id, 0.0) + amount
         elif ev.type == "budget.cap_changed":
             self.policy.budget_cap_eur = float(ev.payload["cap"])
+        elif ev.type == "budget.topup" and ev.mission_id:
+            self.mission_extra[ev.mission_id] = self.mission_extra.get(ev.mission_id, 0.0) + float(ev.payload["amount"])
 
     @property
     def remaining(self) -> float:
         return max(0.0, self.policy.budget_cap_eur - self.spent)
 
-    def check(self, estimated: float, what: str) -> None:
+    def mission_cap(self, mission_id: str) -> float:
+        return self.policy.mission_budget_eur + self.mission_extra.get(mission_id, 0.0)
+
+    def mission_remaining(self, mission_id: str) -> float:
+        return max(0.0, self.mission_cap(mission_id) - self.mission_spent.get(mission_id, 0.0))
+
+    def check(self, estimated: float, what: str, mission_id: str | None = None) -> None:
         if estimated <= 0:
             return
         if self.spent + estimated > self.policy.budget_cap_eur + 1e-12:
             raise BudgetBlocked(
-                f"Dépense estimée {estimated:.4f} pour « {what} » refusée : "
-                f"plafond {self.policy.budget_cap_eur:.2f}, déjà dépensé {self.spent:.4f}."
-            )
+                f"Dépense estimée {estimated:.4f} pour « {what} » refusée : plafond global "
+                f"{self.policy.budget_cap_eur:.2f}, déjà dépensé {self.spent:.4f}.")
+        if mission_id and estimated > self.mission_remaining(mission_id) + 1e-12:
+            raise BudgetBlocked(
+                f"Dépense estimée {estimated:.4f} pour « {what} » refusée : enveloppe de la mission "
+                f"{self.mission_cap(mission_id):.2f}, restant {self.mission_remaining(mission_id):.4f}.")
 
     def charge(self, amount: float, what: str, actor: str, mission_id: str | None = None) -> None:
-        if amount <= 0:
-            return
-        ev = self.ledger.append("budget.charged", actor, {"amount": float(amount), "what": what},
-                                mission_id=mission_id)
-        self._apply(ev)
+        if amount > 0:
+            self.ledger.append("budget.charged", actor, {"amount": float(amount), "what": what}, mission_id=mission_id)
 
     def set_cap(self, cap: float, actor: str, reason: str) -> None:
-        ev = self.ledger.append("budget.cap_changed", actor, {"cap": float(cap), "reason": reason})
-        self._apply(ev)
+        self.ledger.append("budget.cap_changed", actor, {"cap": float(cap), "reason": reason})
+
+    def topup(self, mission_id: str, amount: float, actor: str) -> None:
+        """Recharge l'enveloppe d'une mission (geste humain). Le plafond global reste la limite."""
+        if amount <= 0:
+            raise ValueError("montant positif requis")
+        self.ledger.append("budget.topup", actor, {"amount": float(amount)}, mission_id=mission_id)
 
 
 class Governance:
@@ -116,19 +136,21 @@ class Governance:
         self.policy = policy or Policy()
         self.budget = Budget(ledger, self.policy)
         self.paused = False
-        for ev in ledger.events(types=["colony.paused", "colony.resumed"]):
+        ledger.register(self)
+
+    def apply(self, ev) -> None:
+        if ev.type in ("colony.paused", "colony.resumed"):
             self.paused = ev.type == "colony.paused"
 
     # -- interrupteur d'arrêt -------------------------------------------------
     def pause(self, actor: str, reason: str = "") -> None:
-        self.paused = True
         self.ledger.append("colony.paused", actor, {"reason": reason})
 
     def resume(self, actor: str, reason: str = "") -> None:
-        self.paused = False
         self.ledger.append("colony.resumed", actor, {"reason": reason})
 
     def ensure_running(self) -> None:
+        self.ledger.catch_up()
         if self.paused:
             raise ColonyPaused("La ruche est en pause (interrupteur d'arrêt).")
 
@@ -171,12 +193,15 @@ class Governance:
 
     # -- validations humaines -------------------------------------------------
     def request_approval(self, *, mission_id: str | None, author: str, title: str,
-                         action: dict[str, Any], assessment: Assessment,
-                         simulation: str, parent_id: str | None, refs: list[str]) -> Cell:
+                         action: dict[str, Any], assessment: Assessment, simulation: str,
+                         parent_id: str | None, refs: list[str], rev: int = 1,
+                         preview: list[str] | None = None) -> Cell:
+        """Toute validation humaine BLOQUE sa mission (statut « attend le Conseil ») jusqu'à décision."""
         return self.board.post(
-            "approval", author, title, mission_id=mission_id, status="pending",
+            "approval", author, title, mission_id=mission_id, status="pending", rev=rev,
             parent_id=parent_id, refs=refs, pheromone=3.0,
-            data={"action": action, "assessment": assessment.to_dict(), "simulation": simulation},
+            data={"action": action, "assessment": assessment.to_dict(), "simulation": simulation,
+                  "preview": preview or []},
         )
 
     def resolve_approval(self, approval_id: str, approved: bool, by: str, comment: str = "") -> Cell:
@@ -189,5 +214,5 @@ class Governance:
                                  status="approved" if approved else "rejected",
                                  data={"decided_by": by, "comment": comment})
 
-    def pending_approvals(self) -> list[Cell]:
-        return self.board.query(kind="approval", status="pending")
+    def pending_approvals(self, mission_id: str | None = None) -> list[Cell]:
+        return self.board.query(kind="approval", status="pending", mission_id=mission_id)

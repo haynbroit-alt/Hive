@@ -29,10 +29,30 @@ def test_ledger_chain_and_tamper_detection(tmp_path):
     assert led.verify() == (True, None)
     led.close()
     db = sqlite3.connect(path)
+    with pytest.raises(sqlite3.DatabaseError):  # 1er rideau : la base refuse toute modification
+        db.execute("UPDATE events SET payload = '{\"i\":99}' WHERE seq = 3")
+    db.execute("DROP TRIGGER events_no_update")  # un attaquant avec accès au fichier contourne…
     db.execute("UPDATE events SET payload = '{\"i\":99}' WHERE seq = 3")
     db.commit()
     db.close()
-    assert Ledger(path).verify() == (False, 3)
+    assert Ledger(path).verify() == (False, 3)  # … mais la chaîne SHA-256 le trahit
+
+
+def test_ledger_is_safe_across_processes_and_claims_are_atomic(tmp_path):
+    from hive.core.ledger import AlreadyClaimed
+    path = tmp_path / "l.sqlite3"
+    a, b = Ledger(path), Ledger(path)          # deux « processus » sur le même registre
+    board_b = Board(b)
+    for i in range(5):
+        (a if i % 2 else b).append("x", "t", {"i": i})
+    Board(a).post("observation", "x", "écrit par A")
+    board_b.ledger.catch_up()                   # B voit ce que A a écrit
+    assert any(c.content == "écrit par A" for c in board_b.cells.values())
+    assert a.verify() == (True, None)
+    a.append("run.claimed", "x", {}, mission_id="m", claim=("m", "w", "k", 1))
+    with pytest.raises(AlreadyClaimed):
+        b.append("run.claimed", "y", {}, mission_id="m", claim=("m", "w", "k", 1))
+    assert a.verify() == (True, None)
 
 
 def test_ledger_persists_and_continues_chain(tmp_path):
