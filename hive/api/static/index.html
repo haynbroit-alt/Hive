@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f5a623">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="HIVE">
+  <title>HIVE — Conseil</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <!-- Connexion -->
+  <section id="login" class="screen" hidden>
+    <div class="login-box">
+      <div class="logo big">⬢</div>
+      <h1>HIVE</h1>
+      <p class="muted">Intelligence collective — accès réservé au Conseil.</p>
+      <form id="login-form">
+        <label for="token">Jeton d'accès</label>
+        <input id="token" type="password" autocomplete="current-password" required>
+        <button type="submit" class="primary">Entrer dans la ruche</button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+    </div>
+  </section>
+
+  <!-- Application -->
+  <section id="app" class="screen" hidden>
+    <header class="topbar">
+      <div class="brand"><span class="logo">⬢</span> HIVE</div>
+      <div class="pills">
+        <span id="pill-state" class="pill">…</span>
+        <span id="pill-budget" class="pill" title="Dépensé / plafond">0 €</span>
+      </div>
+      <button id="btn-kill" class="kill" aria-label="Interrupteur d'arrêt">⏸</button>
+    </header>
+
+    <main>
+      <!-- Ruche : flux vivant -->
+      <div id="tab-hive" class="tab">
+        <div class="cards-row">
+          <div class="stat"><b id="st-active">0</b><span>missions actives</span></div>
+          <div class="stat"><b id="st-tasks">0</b><span>tâches ouvertes</span></div>
+          <div class="stat"><b id="st-approvals">0</b><span>validations</span></div>
+        </div>
+        <form id="directive-form" class="inline-form">
+          <input id="directive" placeholder="Directive à toute la ruche…" maxlength="4000">
+          <button class="primary" type="submit">Envoyer</button>
+        </form>
+        <div class="row-actions">
+          <button id="btn-dream" class="ghost">🌙 Faire rêver la ruche</button>
+          <button id="btn-verify" class="ghost">🔒 Vérifier le registre</button>
+        </div>
+        <p id="hive-note" class="muted small"></p>
+        <h2>Activité en direct <span id="live-dot" class="dot"></span></h2>
+        <ol id="feed" class="feed"></ol>
+      </div>
+
+      <!-- Missions -->
+      <div id="tab-missions" class="tab" hidden>
+        <form id="mission-form" class="composer">
+          <textarea id="mission-text" rows="3" maxlength="8000"
+                    placeholder="Confiez une mission à la ruche (texte, voix, photo, vidéo)…" required></textarea>
+          <div class="composer-tools">
+            <select id="mission-profile" aria-label="Profil">
+              <option value="auto">Profil auto</option>
+              <option value="rapide">Rapide</option>
+              <option value="analyse">Analyse</option>
+              <option value="action">Action</option>
+            </select>
+            <label class="icon-btn" title="Photo, vidéo, audio, texte">📎
+              <input id="mission-files" type="file" multiple accept="image/*,video/*,audio/*,text/*,.pdf" hidden>
+            </label>
+            <button type="button" id="btn-record" class="icon-btn" title="Enregistrer un message vocal">🎙️</button>
+            <button type="button" id="btn-dictate" class="icon-btn" title="Dictée (reconnaissance du navigateur)">🗣️</button>
+            <button type="submit" class="primary grow">Lancer</button>
+          </div>
+          <div id="attachments" class="attachments"></div>
+          <p class="muted small" id="record-note"></p>
+        </form>
+        <ul id="missions" class="list"></ul>
+      </div>
+
+      <!-- Détail mission -->
+      <div id="tab-mission" class="tab" hidden>
+        <button id="btn-back" class="ghost">← Missions</button>
+        <div id="mission-detail"></div>
+      </div>
+
+      <!-- Validations -->
+      <div id="tab-approvals" class="tab" hidden>
+        <h2>Décisions qui vous attendent</h2>
+        <div id="approvals"></div>
+        <h2>Leçons proposées</h2>
+        <p class="muted small">Une leçon ne guide la ruche qu'après votre accord (anti-empoisonnement de la mémoire).</p>
+        <div id="lessons"></div>
+        <h2>Questions des abeilles</h2>
+        <div id="needs"></div>
+        <h2>Prévisions à résoudre</h2>
+        <p class="muted small">Dire si une prévision s'est réalisée calibre la confiance des abeilles.</p>
+        <div id="forecasts"></div>
+      </div>
+
+      <!-- Abeilles -->
+      <div id="tab-agents" class="tab" hidden>
+        <h2>Les abeilles</h2>
+        <div id="agents"></div>
+        <h2>Modèles</h2>
+        <div id="providers"></div>
+        <h2>Budget</h2>
+        <p class="muted small">Plafond à 0 € par défaut : aucune dépense sans votre validation explicite.</p>
+        <form id="budget-form" class="inline-form">
+          <input id="budget-cap" type="number" min="0" step="0.5" placeholder="Plafond (€)" required>
+          <input id="budget-reason" placeholder="Raison" minlength="3" required>
+          <button class="ghost" type="submit">Demander</button>
+        </form>
+        <button id="btn-logout" class="ghost danger">Se déconnecter</button>
+      </div>
+    </main>
+
+    <nav class="tabbar">
+      <button data-tab="hive" class="active">⬢<span>Ruche</span></button>
+      <button data-tab="missions">🎯<span>Missions</span></button>
+      <button data-tab="approvals">✋<span>Valider</span><i id="badge" class="badge" hidden>0</i></button>
+      <button data-tab="agents">🐝<span>Abeilles</span></button>
+    </nav>
+  </section>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
